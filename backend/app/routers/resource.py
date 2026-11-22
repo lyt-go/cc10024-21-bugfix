@@ -73,6 +73,31 @@ def export_entries(
     )
 
 
+@router.get("/run_history/{entry_id}/detail", response_model=dict)
+def run_history_detail(entry_id: int) -> dict[str, Any]:
+    """运行详情：只看当次运行的可回查捕获与各期报告，不混入其他运行的数据。"""
+    from app.services.run_history import RunHistoryService
+
+    detail = RunHistoryService().get_run_detail(entry_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"运行记录 {entry_id} 不存在或已归档")
+    return detail
+
+
+@router.get("/run_history/{entry_id}/reports", response_model=list)
+def run_history_reports(entry_id: int, period: int | None = Query(default=None)) -> list[dict[str, Any]]:
+    """运行报告期次：按所取样本返回去重计数、捕获身份与来源。"""
+    from app.services.run_history import RunHistoryService
+
+    service = RunHistoryService()
+    if service.get_entry(entry_id) is None:
+        raise HTTPException(status_code=404, detail=f"运行记录 {entry_id} 不存在或已归档")
+    if period is not None:
+        report = service.get_latest_report(entry_id, period=period)
+        return [report] if report else []
+    return service.get_run_reports(entry_id)
+
+
 @router.get("/{module}/{entry_id}", response_model=dict)
 def get_entry(module: str, entry_id: int) -> dict[str, Any]:
     service = require_service(module)

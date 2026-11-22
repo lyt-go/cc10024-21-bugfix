@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from typing import Any
 
@@ -26,9 +27,17 @@ def data_path(sub: str, filename: str) -> str:
 
 
 def write_json(sub: str, filename: str, data: dict[str, Any]) -> str:
+    """原子写入：先写同目录临时文件再替换，避免并发读取拿到写了一半的JSON。"""
     path = data_path(sub, filename)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp_", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
     return path
 
 
@@ -36,8 +45,12 @@ def read_json(sub: str, filename: str) -> dict[str, Any] | None:
     path = data_path(sub, filename)
     if not os.path.exists(path):
         return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        # 捕获文件可能正在落盘：读不到就当作本次不可回查，绝不拿别的内容顶上。
+        return None
 
 
 def append_jsonl(sub: str, filename: str, record: dict[str, Any]) -> str:
@@ -68,6 +81,14 @@ def list_files(sub: str, suffix: str = "") -> list[str]:
     if suffix:
         names = [n for n in names if n.endswith(suffix)]
     return names
+
+
+def list_capture_files() -> list[str]:
+    """只列出可回查的页面捕获文件，忽略原子写入残留的临时文件。"""
+    return [
+        name for name in list_files("snapshots", ".json")
+        if name.startswith("page_") and not name.startswith(".tmp_")
+    ]
 
 
 def now_iso() -> str:
